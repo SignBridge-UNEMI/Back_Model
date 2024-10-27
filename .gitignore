@@ -33,14 +33,6 @@ include/
 share/
 local/
 
-# No subir archivos de entorno
-.env/
-.venv/
-env/
-venv/
-ENV/
-VENV/
-
 # No subir archivos de pruebas
 *.pytest_cache/
 *.coverage

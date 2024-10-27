@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import render
-from .models import Sample, Training
+from .models import Sample, Training, EvaluationResult
 from .utils import (
     create_folder,
     read_frames_from_directory,
@@ -18,8 +18,10 @@ from .utils import (
     get_keypoints,
     clear_directory
 )
+from .validation_utils import verify_keypoints_structure, verify_all_keypoints_files
 from mediapipe.python.solutions.holistic import Holistic
 from .model import get_model
+from .model_loader import load_latest_model
 
 # Vista para renderizar el template de captura de video
 class VideoCaptureView(APIView):
@@ -32,57 +34,64 @@ class PrediccionCaptureView(APIView):
 
 # Vista para predecir la acción basada en los keypoints generados
 class PredictActionView(APIView):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        try:
+            self.model = load_latest_model()
+        except FileNotFoundError as e:
+            self.model = None
+            print(e)
+
     def post(self, request):
         try:
-            # Recibir landmarks desde el frontend
+            if self.model is None:
+                return Response(
+                    {'error': 'El modelo no está disponible.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
             landmarks = request.data.get('landmarks')
-
             if not landmarks:
-                return Response({'error': 'Landmarks no encontrados.'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'No se encontraron landmarks'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Procesar los landmarks
             keypoints_sequence = np.array([[point['x'], point['y'], point['z']] for point in landmarks])
 
-            # Ajustar el tamaño de keypoints_sequence
+            # Verificar la estructura de keypoints
+            try:
+                verify_keypoints_structure(keypoints_sequence)
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Asegurar que el array tenga la forma correcta para el modelo
             if keypoints_sequence.shape[0] < settings.MODEL_FRAMES:
-                keypoints_sequence = np.pad(
-                    keypoints_sequence,
-                    ((0, settings.MODEL_FRAMES - keypoints_sequence.shape[0]), (0, 0)),
-                    'constant'
-                )
+                keypoints_sequence = np.pad(keypoints_sequence, ((0, settings.MODEL_FRAMES - keypoints_sequence.shape[0]), (0, 0)), 'constant')
             elif keypoints_sequence.shape[0] > settings.MODEL_FRAMES:
                 keypoints_sequence = keypoints_sequence[:settings.MODEL_FRAMES]
 
-            # Cambiar la forma de los keypoints para que coincida con lo que espera el modelo
             keypoints_sequence = keypoints_sequence.reshape(1, settings.MODEL_FRAMES, settings.LENGTH_KEYPOINTS)
 
-            # Cargar el modelo
-            model_file_path = os.path.join(settings.MODEL_FOLDER_PATH, f'actions_{settings.MODEL_FRAMES}.h5')
-            if not os.path.exists(model_file_path):
-                return Response({'error': 'Modelo no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-            model = models.load_model(model_file_path, compile=False)
-
             # Realizar la predicción
-            prediction = model.predict(keypoints_sequence)
+            prediction = self.model.predict(keypoints_sequence)
             predicted_class_index = np.argmax(prediction)
+            confidence = np.max(prediction)
 
-            # Obtener el nombre de la clase predicha desde la base de datos
-            predicted_sample = Sample.objects.filter(id=predicted_class_index).first()
-            if not predicted_sample:
-                return Response({'error': 'Clase predicha no encontrada en la base de datos.'}, status=status.HTTP_404_NOT_FOUND)
+            # Obtener la etiqueta de la clase predicha
+            predicted_sample = Sample.objects.get(id=predicted_class_index)
 
-            predicted_class_name = predicted_sample.label
-            return Response({'predicted_word': predicted_class_name}, status=status.HTTP_200_OK)
+            # Guardar el resultado en EvaluationResult
+            evaluation_result = EvaluationResult.objects.create(
+                sample=predicted_sample,
+                prediction=predicted_sample.label,
+                confidence=confidence
+            )
 
-        except ValueError as e:
-            return Response({'error': f'Error de valor: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({
+                'predicted_word': predicted_sample.label,
+                'confidence': confidence
+            })
+
         except Exception as e:
-            # Log del error para depuración adicional
-            import traceback
-            print("Error inesperado:", traceback.format_exc())
-            return Response({'error': f'Error inesperado: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
     # Vista para capturar muestras y guardarlas en FRAME_ACTIONS_PATH
@@ -156,9 +165,15 @@ class CreateKeypointsView(APIView):
             holistic = Holistic(static_image_mode=True)
             keypoints_sequence = get_keypoints(holistic, sample.normalized_frames_directory)
 
-            # Ruta para guardar los keypoints
+            # Verificar la estructura de keypoints generados
+            try:
+                verify_keypoints_structure(keypoints_sequence)
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Guardar keypoints en el archivo
             keypoints_file = os.path.join(settings.KEYPOINTS_PATH, f'{sample.label}.h5')
-            create_folder(settings.KEYPOINTS_PATH)  # Crear la carpeta si no existe
+            create_folder(settings.KEYPOINTS_PATH)
             pd.DataFrame(keypoints_sequence).to_hdf(keypoints_file, key='keypoints', mode='w')
               
             sample.keypoints_file = keypoints_file

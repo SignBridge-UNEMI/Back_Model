@@ -61,26 +61,28 @@
         // Dibuja las conexiones de las manos
         const handsDetected = results.leftHandLandmarks || results.rightHandLandmarks;
     
-        if (results.leftHandLandmarks) {
-            drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 1});
-            drawLandmarks(canvasCtx, results.leftHandLandmarks, {color: '#FF0000', lineWidth: 1});
-        }
-    
-        if (results.rightHandLandmarks) {
-            drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 1});
-            drawLandmarks(canvasCtx, results.rightHandLandmarks, {color: '#FF0000', lineWidth: 1});
-        }
-    
-        // Dibuja las conexiones del rostro
-        if (results.faceLandmarks) {
-            drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-        }
-    
-        // Dibuja las conexiones del cuerpo (pose)
         if (results.poseLandmarks) {
-            drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-            drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2});
-        }
+          drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS,
+              {color: '#00FF00', lineWidth: 4});
+          drawLandmarks(canvasCtx, results.poseLandmarks,
+              {color: '#FF0000', lineWidth: 2});
+      }
+      if (results.faceLandmarks) {
+          drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_TESSELATION,
+              {color: '#C0C0C070', lineWidth: 1});
+      }
+      if (results.leftHandLandmarks) {
+          drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS,
+              {color: '#CC0000', lineWidth: 5});
+          drawLandmarks(canvasCtx, results.leftHandLandmarks,
+              {color: '#00FF00', lineWidth: 2});
+      }
+      if (results.rightHandLandmarks) {
+          drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS,
+              {color: '#00CC00', lineWidth: 5});
+          drawLandmarks(canvasCtx, results.rightHandLandmarks,
+              {color: '#FF0000', lineWidth: 2});
+      }
     
         // Iniciar o detener la grabación basada en la detección de manos
         if (handsDetected && !isRecording) {

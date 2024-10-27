@@ -7,100 +7,241 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
     <style>
-        #container {
+        .container {
             display: flex;
+            flex-direction: column;
             align-items: center;
+            padding: 20px;
+        }
+        .video-container {
+            position: relative;
+            margin-bottom: 20px;
         }
         #video {
             width: 640px;
             height: 480px;
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .prediction-container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+            min-width: 200px;
         }
         #predictedText {
-            margin-left: 20px;
-            padding: 10px;
-            border: 1px solid #ccc;
-            width: 200px;
-            height: 50px;
-            font-size: 18px;
-            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+            color: #333;
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 10px;
+        }
+        .start-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .stop-btn {
+            background-color: #f44336;
+            color: white;
         }
     </style>
 </head>
 <body>
-    <h1>Traducción de Señales a Texto</h1>
-    <div id="container">
-        <video id="video" autoplay playsinline></video>
-        <div id="predictedText">Palabra predicha aquí</div>
+    <div class="container">
+        <h1>Traducción de Señales a Texto</h1>
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        <div class="prediction-container">
+            <h3>Predicción:</h3>
+            <div id="predictedText">Esperando señal...</div>
+        </div>
+        <div class="controls">
+            <button id="startButton" class="start-btn">Iniciar</button>
+            <button id="stopButton" class="stop-btn">Detener</button>
+        </div>
     </div>
 
-    <script type="module">
+    <script>
+        let isCapturing = false;
+        let frameCount = 0;
+        const FRAMES_BEFORE_PREDICTION = 15; // Ajusta este valor según tu modelo
+        let landmarksSequence = [];
+        
         const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
         const predictedTextElement = document.getElementById('predictedText');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const canvasCtx = canvasElement.getContext('2d');
 
-        // Configuración de MediaPipe
-        const hands = new Hands({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        // Configurar el canvas al tamaño del video
+        canvasElement.width = 640;
+        canvasElement.height = 480;
+
+        // Configuración de MediaPipe Holistic
+        const holistic = new Holistic({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`;
+            }
         });
-        hands.setOptions({
-            maxNumHands: 1,
+
+        holistic.setOptions({
             modelComplexity: 1,
+            smoothLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
-        hands.onResults(onResults);
 
-        // Iniciar la cámara
+        // Configurar la cámara
         const camera = new Camera(videoElement, {
             onFrame: async () => {
-                await hands.send({image: videoElement});
+                if (isCapturing) {
+                    await holistic.send({image: videoElement});
+                }
             },
             width: 640,
             height: 480
         });
-        camera.start();
 
-        // Función para manejar los resultados de la detección de manos
-        function onResults(results) {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                predictWord(landmarks);
-            } else {
-                predictedTextElement.innerText = "No se detecta ninguna mano";
+        // Función para manejar los resultados de MediaPipe
+        holistic.onResults((results) => {
+            if (!isCapturing) return;
+
+            // Dibujar los landmarks
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.poseLandmarks) {
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS,
+                    {color: '#00FF00', lineWidth: 4});
+                drawLandmarks(canvasCtx, results.poseLandmarks,
+                    {color: '#FF0000', lineWidth: 2});
             }
-        }
+            if (results.faceLandmarks) {
+                drawConnectors(canvasCtx, results.faceLandmarks, FACEMESH_TESSELATION,
+                    {color: '#C0C0C070', lineWidth: 1});
+            }
+            if (results.leftHandLandmarks) {
+                drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS,
+                    {color: '#CC0000', lineWidth: 5});
+                drawLandmarks(canvasCtx, results.leftHandLandmarks,
+                    {color: '#00FF00', lineWidth: 2});
+            }
+            if (results.rightHandLandmarks) {
+                drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS,
+                    {color: '#00CC00', lineWidth: 5});
+                drawLandmarks(canvasCtx, results.rightHandLandmarks,
+                    {color: '#FF0000', lineWidth: 2});
+            }
+
+            // Recolectar landmarks
+            const allLandmarks = [];
+            
+            // Agregar landmarks de las manos si están disponibles
+            if (results.leftHandLandmarks) {
+                allLandmarks.push(...results.leftHandLandmarks);
+            }
+            if (results.rightHandLandmarks) {
+                allLandmarks.push(...results.rightHandLandmarks);
+            }
+
+            if (allLandmarks.length > 0) {
+                landmarksSequence.push(allLandmarks);
+                frameCount++;
+
+                if (frameCount >= FRAMES_BEFORE_PREDICTION) {
+                    predictSign(landmarksSequence);
+                    landmarksSequence = [];
+                    frameCount = 0;
+                }
+            }
+        });
 
         // Función para realizar la predicción
-        async function predictWord(landmarks) {
-            // Formatear los landmarks para enviarlos al backend
-            const data = {
-                landmarks: landmarks.map(({ x, y, z }) => ({ x, y, z }))
-            };
-
+        async function predictSign(landmarksSequence) {
             try {
-                // Realizar la solicitud POST al backend
                 const response = await fetch('/api/predict-action/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')  // Función para obtener el token CSRF
                     },
-                    body: JSON.stringify(data)
+                    body: JSON.stringify({
+                        landmarks: landmarksSequence.flat()
+                    })
                 });
 
-                const result = await response.json();
+                const data = await response.json();
                 if (response.ok) {
-                    // Mostrar la palabra predicha en el elemento
-                    predictedTextElement.innerText = result.predicted_word;
+                    predictedTextElement.textContent = data.predicted_word;
                 } else {
-                    predictedTextElement.innerText = result.error || "Error en la predicción";
+                    console.error('Error en la predicción:', data.error);
+                    predictedTextElement.textContent = 'Error en la predicción';
                 }
             } catch (error) {
-                console.error("Error:", error);
-                predictedTextElement.innerText = "Error de conexión";
+                console.error('Error:', error);
+                predictedTextElement.textContent = 'Error de conexión';
             }
         }
+
+        // Función para obtener el token CSRF
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        // Eventos de los botones
+        startButton.addEventListener('click', () => {
+            isCapturing = true;
+            predictedTextElement.textContent = 'Capturando...';
+            console.log('Iniciando la cámara...');
+            camera.start().catch(error => {
+                console.error('Error al iniciar la cámara:', error);
+                predictedTextElement.textContent = 'Error al iniciar la cámara';
+                if (error.name === 'NotReadableError') {
+                    alert('No se puede acceder a la cámara. Asegúrate de que no esté siendo utilizada por otra aplicación.');
+                }
+            });
+        });
+
+        stopButton.addEventListener('click', () => {
+            isCapturing = false;
+            predictedTextElement.textContent = 'Detenido';
+            console.log('Deteniendo la cámara...');
+            camera.stop();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        });
+
     </script>
 </body>
 </html>
