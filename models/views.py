@@ -16,7 +16,8 @@ from .utils import (
     normalize_frames,
     save_normalized_frames,
     get_keypoints,
-    clear_directory
+    clear_directory,
+    normalize_keypoints
 )
 from .validation_utils import verify_keypoints_structure, verify_all_keypoints_files
 from mediapipe.python.solutions.holistic import Holistic
@@ -34,32 +35,36 @@ class PrediccionCaptureView(APIView):
 
 # Vista para predecir la acción basada en los keypoints generados
 class PredictActionView(APIView):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        try:
-            self.model = load_latest_model()
-        except FileNotFoundError as e:
-            self.model = None
-            print(e)
+
+        
 
     def post(self, request):
         try:
-            if self.model is None:
+            model = models.load_model(settings.MODEL_PATH)
+            if model is None:
                 return Response(
                     {'error': 'El modelo no está disponible.'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
+            # Depurar los datos recibidos
+            print("Datos recibidos del frontend:", request.data.get('landmarks'))
+
             landmarks = request.data.get('landmarks')
             if not landmarks:
                 return Response({'error': 'No se encontraron landmarks'}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Convertir landmarks a numpy array
             keypoints_sequence = np.array([[point['x'], point['y'], point['z']] for point in landmarks])
+            keypoints_sequence = normalize_keypoints(keypoints_sequence)
+            # import pdb;pdb.set_trace()
+            print("Secuencia de keypoints procesada:", keypoints_sequence.shape)
 
             # Verificar la estructura de keypoints
             try:
                 verify_keypoints_structure(keypoints_sequence)
             except ValueError as e:
+                print("Error en la estructura de keypoints:", e)
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
             # Asegurar que el array tenga la forma correcta para el modelo
@@ -69,14 +74,19 @@ class PredictActionView(APIView):
                 keypoints_sequence = keypoints_sequence[:settings.MODEL_FRAMES]
 
             keypoints_sequence = keypoints_sequence.reshape(1, settings.MODEL_FRAMES, settings.LENGTH_KEYPOINTS)
+            print("Secuencia de keypoints ajustada para el modelo:", keypoints_sequence.shape)
 
             # Realizar la predicción
-            prediction = self.model.predict(keypoints_sequence)
+            prediction = model.predict(keypoints_sequence)
             predicted_class_index = np.argmax(prediction)
             confidence = np.max(prediction)
+            print("Resultado de predicción:", prediction)
+            print("Índice de clase predicha:", predicted_class_index)
+            print("Confianza de la predicción:", confidence)
 
             # Obtener la etiqueta de la clase predicha
             predicted_sample = Sample.objects.get(id=predicted_class_index)
+            print("Etiqueta predicha:", predicted_sample.label)
 
             # Guardar el resultado en EvaluationResult
             evaluation_result = EvaluationResult.objects.create(
@@ -91,7 +101,9 @@ class PredictActionView(APIView):
             })
 
         except Exception as e:
+            print("Error durante la predicción:", e)
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
     # Vista para capturar muestras y guardarlas en FRAME_ACTIONS_PATH
@@ -162,18 +174,13 @@ class CreateKeypointsView(APIView):
     def post(self, request, sample_id):
         try:
             sample = Sample.objects.get(id=sample_id)
+            
             holistic = Holistic(static_image_mode=True)
             keypoints_sequence = get_keypoints(holistic, sample.normalized_frames_directory)
 
-            # Verificar la estructura de keypoints generados
-            try:
-                verify_keypoints_structure(keypoints_sequence)
-            except ValueError as e:
-                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Guardar keypoints en el archivo
+            # Ruta para guardar los keypoints
             keypoints_file = os.path.join(settings.KEYPOINTS_PATH, f'{sample.label}.h5')
-            create_folder(settings.KEYPOINTS_PATH)
+            create_folder(settings.KEYPOINTS_PATH)  # Crear la carpeta si no existe
             pd.DataFrame(keypoints_sequence).to_hdf(keypoints_file, key='keypoints', mode='w')
               
             sample.keypoints_file = keypoints_file

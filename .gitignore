@@ -76,6 +76,7 @@ doc/_build/
 migrations/
 
 # No subir los frames 
-frames/
-frame_acrions/
+*frames/
+*frame_acrions/
 data/
+frame_acrions/

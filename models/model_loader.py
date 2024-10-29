@@ -1,5 +1,5 @@
 import os
-from tensorflow.keras.models import load_model
+from keras import models
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.utils._os import safe_join
@@ -23,7 +23,7 @@ def load_latest_model():
             raise FileNotFoundError(f"No se encontró el archivo del modelo: {safe_model_path}")
 
         # Cargando el modelo
-        model = load_model(safe_model_path)
+        model = models.load_model(safe_model_path)
         return model
     except Training.DoesNotExist:
         raise FileNotFoundError("No se encontró ningún modelo entrenado.")

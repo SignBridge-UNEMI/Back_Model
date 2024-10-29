@@ -85,7 +85,7 @@
     <script>
         let isCapturing = false;
         let frameCount = 0;
-        const FRAMES_BEFORE_PREDICTION = 15; // Ajusta este valor según tu modelo
+        const FRAMES_BEFORE_PREDICTION = 15;
         let landmarksSequence = [];
         
         const videoElement = document.getElementById('video');
@@ -180,17 +180,20 @@
         // Función para realizar la predicción
         async function predictSign(landmarksSequence) {
             try {
+                // Imprimir los datos enviados al backend
+                console.log("Datos enviados al backend:", JSON.stringify(landmarksSequence.flat()));
+                
                 const response = await fetch('/api/predict-action/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRFToken': getCookie('csrftoken')  // Función para obtener el token CSRF
+                        
                     },
                     body: JSON.stringify({
                         landmarks: landmarksSequence.flat()
                     })
                 });
-
+        
                 const data = await response.json();
                 if (response.ok) {
                     predictedTextElement.textContent = data.predicted_word;
@@ -203,7 +206,7 @@
                 predictedTextElement.textContent = 'Error de conexión';
             }
         }
-
+        
         // Función para obtener el token CSRF
         function getCookie(name) {
             let cookieValue = null;

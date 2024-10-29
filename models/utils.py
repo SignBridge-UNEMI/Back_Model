@@ -117,3 +117,21 @@ def insert_keypoints_sequence(data, sample_num, keypoints_sequence):
         row['frame'] = idx
         data = pd.concat([data, row], ignore_index=True)
     return data
+
+
+def normalize_keypoints(keypoints_sequence, target_length=15, target_dimensions=1662):
+    # Redimensionar para que la secuencia tenga la cantidad de frames objetivo
+    if keypoints_sequence.shape[0] > target_length:
+        indices = np.linspace(0, keypoints_sequence.shape[0] - 1, target_length).astype(int)
+        keypoints_sequence = keypoints_sequence[indices]
+    elif keypoints_sequence.shape[0] < target_length:
+        keypoints_sequence = np.pad(keypoints_sequence, ((0, target_length - keypoints_sequence.shape[0]), (0, 0)), 'constant')
+    
+    # Asegurar que cada frame tenga el número de componentes requeridos
+    if keypoints_sequence.shape[1] < target_dimensions:
+        # Expandir la dimensión de cada keypoint para cumplir con el tamaño objetivo
+        keypoints_sequence = np.pad(keypoints_sequence, ((0, 0), (0, target_dimensions - keypoints_sequence.shape[1])), 'constant')
+    elif keypoints_sequence.shape[1] > target_dimensions:
+        keypoints_sequence = keypoints_sequence[:, :target_dimensions]
+    
+    return keypoints_sequence
