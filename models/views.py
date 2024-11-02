@@ -1,8 +1,8 @@
 import os
 import cv2
-import tensorflow as tf
 import numpy as np
 import pandas as pd
+import logging
 from django.conf import settings
 from keras import models
 from rest_framework.views import APIView
@@ -19,10 +19,13 @@ from .utils import (
     clear_directory,
     normalize_keypoints
 )
-from .validation_utils import verify_keypoints_structure, verify_all_keypoints_files
+from .validation_utils import verify_keypoints_structure
 from mediapipe.python.solutions.holistic import Holistic
 from .model import get_model
-from .model_loader import load_latest_model
+
+# Configurar el logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Vista para renderizar el template de captura de video
 class VideoCaptureView(APIView):
@@ -35,36 +38,28 @@ class PrediccionCaptureView(APIView):
 
 # Vista para predecir la acción basada en los keypoints generados
 class PredictActionView(APIView):
-
-        
-
     def post(self, request):
         try:
-            model = models.load_model(settings.MODEL_PATH)
+            model = models.load_model(settings.MODEL_PATH)  # Carga el modelo con la nueva extensión .keras
             if model is None:
                 return Response(
                     {'error': 'El modelo no está disponible.'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-            # Depurar los datos recibidos
-            print("Datos recibidos del frontend:", request.data.get('landmarks'))
-
             landmarks = request.data.get('landmarks')
-            if not landmarks:
-                return Response({'error': 'No se encontraron landmarks'}, status=status.HTTP_400_BAD_REQUEST)
+            if not landmarks or not isinstance(landmarks, list) or not all(isinstance(point, dict) for point in landmarks):
+                return Response({'error': 'No se encontraron landmarks válidos'}, status=status.HTTP_400_BAD_REQUEST)
 
             # Convertir landmarks a numpy array
             keypoints_sequence = np.array([[point['x'], point['y'], point['z']] for point in landmarks])
             keypoints_sequence = normalize_keypoints(keypoints_sequence)
-            # import pdb;pdb.set_trace()
-            print("Secuencia de keypoints procesada:", keypoints_sequence.shape)
 
             # Verificar la estructura de keypoints
             try:
                 verify_keypoints_structure(keypoints_sequence)
             except ValueError as e:
-                print("Error en la estructura de keypoints:", e)
+                logger.error("Error en la estructura de keypoints: %s", e)
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
             # Asegurar que el array tenga la forma correcta para el modelo
@@ -74,22 +69,17 @@ class PredictActionView(APIView):
                 keypoints_sequence = keypoints_sequence[:settings.MODEL_FRAMES]
 
             keypoints_sequence = keypoints_sequence.reshape(1, settings.MODEL_FRAMES, settings.LENGTH_KEYPOINTS)
-            print("Secuencia de keypoints ajustada para el modelo:", keypoints_sequence.shape)
 
             # Realizar la predicción
             prediction = model.predict(keypoints_sequence)
             predicted_class_index = np.argmax(prediction)
             confidence = np.max(prediction)
-            print("Resultado de predicción:", prediction)
-            print("Índice de clase predicha:", predicted_class_index)
-            print("Confianza de la predicción:", confidence)
 
             # Obtener la etiqueta de la clase predicha
             predicted_sample = Sample.objects.get(id=predicted_class_index)
-            print("Etiqueta predicha:", predicted_sample.label)
 
             # Guardar el resultado en EvaluationResult
-            evaluation_result = EvaluationResult.objects.create(
+            EvaluationResult.objects.create(
                 sample=predicted_sample,
                 prediction=predicted_sample.label,
                 confidence=confidence
@@ -101,24 +91,25 @@ class PredictActionView(APIView):
             })
 
         except Exception as e:
-            print("Error durante la predicción:", e)
+            logger.error("Error durante la predicción: %s", e)
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
-
-    # Vista para capturar muestras y guardarlas en FRAME_ACTIONS_PATH
+# Vista para capturar muestras y guardarlas en FRAME_ACTIONS_PATH
 class CaptureSamplesView(APIView):
     def post(self, request):
         label = request.data.get('label')
         video_file = request.FILES.get('video')
-        
         
         if not label or not video_file:
             return Response({'error': 'El label y el archivo de video son requeridos.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Ruta donde se guardarán los frames
         frames_dir = os.path.join(settings.FRAME_ACTIONS_PATH, label)
-        os.makedirs(frames_dir, exist_ok=True)
+        try:
+            os.makedirs(frames_dir, exist_ok=True)
+        except OSError as e:
+            logger.error("Error al crear directorio para los frames: %s", e)
+            return Response({'error': 'No se pudo crear el directorio.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Guardar el video temporalmente en el sistema de archivos
         temp_video_path = os.path.join(frames_dir, 'temp_video.webm')
@@ -154,7 +145,6 @@ class NormalizeSamplesView(APIView):
             sample = Sample.objects.get(id=sample_id)
             
             frames = read_frames_from_directory(sample.frames_directory)
-            
             normalized_frames = normalize_frames(frames, target_frame_count=settings.MODEL_FRAMES)
 
             # Ruta para los frames normalizados
@@ -177,6 +167,7 @@ class CreateKeypointsView(APIView):
             
             holistic = Holistic(static_image_mode=True)
             keypoints_sequence = get_keypoints(holistic, sample.normalized_frames_directory)
+            holistic.close()  # Cerrar el objeto Holistic
 
             # Ruta para guardar los keypoints
             keypoints_file = os.path.join(settings.KEYPOINTS_PATH, f'{sample.label}.h5')
@@ -196,7 +187,12 @@ class TrainModelView(APIView):
         # Obtener parámetros de entrenamiento
         max_length_frames = settings.MODEL_FRAMES
         output_length = request.data.get('output_length', 10)
-        
+
+        # Verificar si hay keypoints generados
+        keypoints_files = Sample.objects.filter(keypoints_file__isnull=False)
+        if not keypoints_files.exists():
+            return Response({'error': 'No hay keypoints generados para entrenar el modelo.'}, status=status.HTTP_400_BAD_REQUEST)
+
         # Cargar datos de entrenamiento
         # Aquí cargarías los datos a partir de los archivos .h5 generados anteriormente
 
@@ -209,14 +205,13 @@ class TrainModelView(APIView):
         # Crear la carpeta del modelo si no existe
         create_folder(settings.MODEL_FOLDER_PATH)
         
-        # Definir la ruta para guardar el modelo en formato HDF5
-        model_file_path = os.path.join(settings.MODEL_FOLDER_PATH, 'actions_15.h5')  # Cambia el nombre si es necesario
+        # Definir la ruta para guardar el modelo en formato Keras
+        model_file_path = os.path.join(settings.MODEL_FOLDER_PATH, f"actions_{settings.MODEL_FRAMES}.keras")  # Cambia la extensión a .keras
         
-        # Guardar el modelo entrenado en formato HDF5
-        model.save(model_file_path, save_format='h5')  # Especificar el formato
+        # Guardar el modelo entrenado en formato Keras
+        model.save(model_file_path)  # No es necesario especificar el formato
         
         # Crear una entrada en la base de datos para el entrenamiento
         training = Training.objects.create(model_file=model_file_path)
         
         return Response({'message': 'Modelo entrenado exitosamente.', 'training_id': training.id}, status=status.HTTP_201_CREATED)
-

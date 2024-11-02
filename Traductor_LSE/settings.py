@@ -28,7 +28,7 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1'] 
 
 
 # Application definition
@@ -54,6 +54,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
 ]
 
 ROOT_URLCONF = 'Traductor_LSE.urls'
@@ -143,7 +147,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 
-# Todas las contactantes de la red neuronal 
+# Todas las configuraciones de la red neuronal 
 
 # SETTINGS ESPECÍFICOS DEL MODELO
 MIN_LENGTH_FRAMES = 5
@@ -156,7 +160,7 @@ FRAME_ACTIONS_PATH = os.path.join(ROOT_PATH, "frame_actions")
 DATA_PATH = os.path.join(ROOT_PATH, "data")
 DATA_JSON_PATH = os.path.join(DATA_PATH, "data.json")
 MODEL_FOLDER_PATH = os.path.join(ROOT_PATH, "models")
-MODEL_PATH = os.path.join(MODEL_FOLDER_PATH, f"actions_{MODEL_FRAMES}.h5")
+MODEL_PATH = os.path.join(MODEL_FOLDER_PATH, f"actions_{MODEL_FRAMES}.keras")  # Cambia la extensión a .keras
 KEYPOINTS_PATH = os.path.join(DATA_PATH, "keypoints")
 WORDS_JSON_PATH = os.path.join(MODEL_FOLDER_PATH, "words.json")
 
@@ -164,8 +168,3 @@ WORDS_JSON_PATH = os.path.join(MODEL_FOLDER_PATH, "words.json")
 FONT = cv2.FONT_HERSHEY_PLAIN
 FONT_SIZE = 1.5
 FONT_POS = (5, 30)
-
-# Diccionario de palabras para la traducción
-WORDS_TEXT = {
-    "buenos_dias": "BUENOS DÍAS",
-}
