@@ -3,7 +3,6 @@ import os
 from django.conf import settings
 
 def verify_keypoints_structure(keypoints):
-    """Verifica que la estructura de keypoints coincida con la configuración del modelo."""
     if len(keypoints) != settings.MODEL_FRAMES:
         raise ValueError(f"Los keypoints deben tener {settings.MODEL_FRAMES} frames, pero tiene {len(keypoints)}.")
     
@@ -12,7 +11,6 @@ def verify_keypoints_structure(keypoints):
             raise ValueError(f"Cada frame debe tener {settings.LENGTH_KEYPOINTS} puntos clave, pero tiene {len(frame)}.")
 
 def verify_all_keypoints_files(keypoints_dir):
-    """Verifica todos los archivos de keypoints en un directorio."""
     for file_name in os.listdir(keypoints_dir):
         if file_name.endswith(".npy"):
             file_path = os.path.join(keypoints_dir, file_name)

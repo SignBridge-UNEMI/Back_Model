@@ -4,7 +4,6 @@ from tensorflow.keras.regularizers import l2
 from django.conf import settings
 
 def get_model(max_length_frames, output_length: int):
-    # Usar LENGTH_KEYPOINTS del archivo de configuración de settings
     length_keypoints = settings.LENGTH_KEYPOINTS
     
     model = Sequential()

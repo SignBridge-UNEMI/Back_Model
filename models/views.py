@@ -23,11 +23,9 @@ from .validation_utils import verify_keypoints_structure
 from mediapipe.python.solutions.holistic import Holistic
 from .model import get_model
 
-# Configurar el logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Vista para renderizar el template de captura de video
 class VideoCaptureView(APIView):
     def get(self, request):
         return render(request, 'video_capture.html')
@@ -40,7 +38,7 @@ class PrediccionCaptureView(APIView):
 class PredictActionView(APIView):
     def post(self, request):
         try:
-            model = models.load_model(settings.MODEL_PATH)  # Carga el modelo con la nueva extensión .keras
+            model = models.load_model(settings.MODEL_PATH)
             if model is None:
                 return Response(
                     {'error': 'El modelo no está disponible.'},
@@ -51,18 +49,15 @@ class PredictActionView(APIView):
             if not landmarks or not isinstance(landmarks, list) or not all(isinstance(point, dict) for point in landmarks):
                 return Response({'error': 'No se encontraron landmarks válidos'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Convertir landmarks a numpy array
             keypoints_sequence = np.array([[point['x'], point['y'], point['z']] for point in landmarks])
             keypoints_sequence = normalize_keypoints(keypoints_sequence)
 
-            # Verificar la estructura de keypoints
             try:
                 verify_keypoints_structure(keypoints_sequence)
             except ValueError as e:
                 logger.error("Error en la estructura de keypoints: %s", e)
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Asegurar que el array tenga la forma correcta para el modelo
             if keypoints_sequence.shape[0] < settings.MODEL_FRAMES:
                 keypoints_sequence = np.pad(keypoints_sequence, ((0, settings.MODEL_FRAMES - keypoints_sequence.shape[0]), (0, 0)), 'constant')
             elif keypoints_sequence.shape[0] > settings.MODEL_FRAMES:
@@ -70,15 +65,12 @@ class PredictActionView(APIView):
 
             keypoints_sequence = keypoints_sequence.reshape(1, settings.MODEL_FRAMES, settings.LENGTH_KEYPOINTS)
 
-            # Realizar la predicción
             prediction = model.predict(keypoints_sequence)
             predicted_class_index = np.argmax(prediction)
             confidence = np.max(prediction)
 
-            # Obtener la etiqueta de la clase predicha
             predicted_sample = Sample.objects.get(id=predicted_class_index)
 
-            # Guardar el resultado en EvaluationResult
             EvaluationResult.objects.create(
                 sample=predicted_sample,
                 prediction=predicted_sample.label,
@@ -94,7 +86,6 @@ class PredictActionView(APIView):
             logger.error("Error durante la predicción: %s", e)
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# Vista para capturar muestras y guardarlas en FRAME_ACTIONS_PATH
 class CaptureSamplesView(APIView):
     def post(self, request):
         label = request.data.get('label')
@@ -103,7 +94,6 @@ class CaptureSamplesView(APIView):
         if not label or not video_file:
             return Response({'error': 'El label y el archivo de video son requeridos.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Ruta donde se guardarán los frames
         frames_dir = os.path.join(settings.FRAME_ACTIONS_PATH, label)
         try:
             os.makedirs(frames_dir, exist_ok=True)
@@ -111,13 +101,11 @@ class CaptureSamplesView(APIView):
             logger.error("Error al crear directorio para los frames: %s", e)
             return Response({'error': 'No se pudo crear el directorio.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Guardar el video temporalmente en el sistema de archivos
         temp_video_path = os.path.join(frames_dir, 'temp_video.webm')
         with open(temp_video_path, 'wb') as f:
             for chunk in video_file.chunks():
                 f.write(chunk)
 
-        # Cargar el video utilizando OpenCV
         video_capture = cv2.VideoCapture(temp_video_path)
 
         frame_count = 0
@@ -131,14 +119,12 @@ class CaptureSamplesView(APIView):
         
         video_capture.release()
 
-        # Eliminar el archivo temporal después de extraer los frames
         os.remove(temp_video_path)
 
         # Crear la instancia de Sample
         sample = Sample.objects.create(frames_directory=frames_dir, label=label)
         return Response({'message': 'Muestras capturadas exitosamente.', 'sample_id': sample.id}, status=status.HTTP_201_CREATED)
 
-# Vista para normalizar muestras
 class NormalizeSamplesView(APIView):
     def post(self, request, sample_id):
         try:
@@ -147,7 +133,6 @@ class NormalizeSamplesView(APIView):
             frames = read_frames_from_directory(sample.frames_directory)
             normalized_frames = normalize_frames(frames, target_frame_count=settings.MODEL_FRAMES)
 
-            # Ruta para los frames normalizados
             normalized_dir = f'{sample.frames_directory}'
             clear_directory(normalized_dir)
             save_normalized_frames(normalized_dir, normalized_frames)
@@ -159,7 +144,6 @@ class NormalizeSamplesView(APIView):
         except Sample.DoesNotExist:
             return Response({'error': 'Sample no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
-# Vista para generar keypoints
 class CreateKeypointsView(APIView):
     def post(self, request, sample_id):
         try:
@@ -167,11 +151,10 @@ class CreateKeypointsView(APIView):
             
             holistic = Holistic(static_image_mode=True)
             keypoints_sequence = get_keypoints(holistic, sample.normalized_frames_directory)
-            holistic.close()  # Cerrar el objeto Holistic
+            holistic.close()
 
-            # Ruta para guardar los keypoints
             keypoints_file = os.path.join(settings.KEYPOINTS_PATH, f'{sample.label}.h5')
-            create_folder(settings.KEYPOINTS_PATH)  # Crear la carpeta si no existe
+            create_folder(settings.KEYPOINTS_PATH)
             pd.DataFrame(keypoints_sequence).to_hdf(keypoints_file, key='keypoints', mode='w')
               
             sample.keypoints_file = keypoints_file
@@ -181,37 +164,23 @@ class CreateKeypointsView(APIView):
         except Sample.DoesNotExist:
             return Response({'error': 'Sample no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
-# Vista para entrenar el modelo
 class TrainModelView(APIView):
     def post(self, request):
-        # Obtener parámetros de entrenamiento
         max_length_frames = settings.MODEL_FRAMES
         output_length = request.data.get('output_length', 10)
 
-        # Verificar si hay keypoints generados
         keypoints_files = Sample.objects.filter(keypoints_file__isnull=False)
         if not keypoints_files.exists():
             return Response({'error': 'No hay keypoints generados para entrenar el modelo.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Cargar datos de entrenamiento
-        # Aquí cargarías los datos a partir de los archivos .h5 generados anteriormente
-
-        # Definir y entrenar el modelo
         model = get_model(max_length_frames, output_length)
-        
-        # Entrenar el modelo con los datos cargados
-        # model.fit(...)
 
-        # Crear la carpeta del modelo si no existe
         create_folder(settings.MODEL_FOLDER_PATH)
-        
-        # Definir la ruta para guardar el modelo en formato Keras
-        model_file_path = os.path.join(settings.MODEL_FOLDER_PATH, f"actions_{settings.MODEL_FRAMES}.keras")  # Cambia la extensión a .keras
-        
-        # Guardar el modelo entrenado en formato Keras
-        model.save(model_file_path)  # No es necesario especificar el formato
-        
-        # Crear una entrada en la base de datos para el entrenamiento
+
+        model_file_path = os.path.join(settings.MODEL_FOLDER_PATH, f"actions_{settings.MODEL_FRAMES}.h5")
+
+        model.save(model_file_path)
+
         training = Training.objects.create(model_file=model_file_path)
         
         return Response({'message': 'Modelo entrenado exitosamente.', 'training_id': training.id}, status=status.HTTP_201_CREATED)
